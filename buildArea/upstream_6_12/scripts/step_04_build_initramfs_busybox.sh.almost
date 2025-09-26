@@ -3,10 +3,16 @@
 set -e
 
 # --- Configuration ---
+# Set the desired BusyBox version
 BUSYBOX_VERSION="1.36.1"
+# Path to your AArch64 cross-compiler prefix
 CROSS_COMPILE="aarch64-linux-gnu-"
+
+# Directory for building BusyBox
 BUILD_DIR="build/busybox"
+# Directory for the final initramfs contents
 INITRAMFS_DIR="build/initramfs"
+# Output filename for the gzipped cpio archive
 OUTPUT_FILE="initramfs.cpio.gz"
 
 # --- Script functions ---
@@ -16,40 +22,33 @@ download_busybox() {
     tar -xf "busybox-$BUSYBOX_VERSION.tar.bz2"
 }
 
-check_cross_compiler() {
-    echo "Checking for cross-compiler: ${CROSS_COMPILE}gcc"
-    if ! command -v "${CROSS_COMPILE}gcc" &> /dev/null; then
-        echo "Error: Cross-compiler '${CROSS_COMPILE}gcc' not found in PATH."
-        echo "Please install it, for example on Debian/Ubuntu: sudo apt install crossbuild-essential-arm64"
-        exit 1
-    fi
-}
-
 configure_busybox() {
-    echo "Configuring BusyBox for AArch64..."
+    echo "Configuring BusyBox..."
     cd "busybox-$BUSYBOX_VERSION"
     
-    # Create a default configuration for the target architecture
-    make defconfig ARCH=arm64
+    # Create a default configuration
+    make defconfig ARCH=arm64 
     
-    # Modify the config using sed
+    # --- Modify the config using sed ---
     # Build a static binary (no shared libraries)
     sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
     # Set the cross-compiler prefix
     sed -i "s/# CONFIG_CROSS_COMPILER_PREFIX is not set/CONFIG_CROSS_COMPILER_PREFIX=\"${CROSS_COMPILE}\"/" .config
     
-    # Disable the 'tc' applet
-    echo "Disabling CONFIG_TC..."
+    # Disable the 'tc' applet to fix build issues with recent kernel headers
+    echo "Disabling CONFIG_TC to fix build issues with recent kernel headers..."
     sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
     sed -i 's/CONFIG_FEATURE_TC_INGRESS=y/# CONFIG_FEATURE_TC_INGRESS is not set/' .config
 }
 
 build_and_install_busybox() {
-    echo "Building BusyBox for AArch64..."
+    echo "Building BusyBox..."
+    # Build BusyBox using the cross-compiler for AArch64
+    # The ARCH and CROSS_COMPILE are passed directly to make
     make -j$(nproc) ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE}"
     
-    echo "Installing BusyBox to temporary build directory..."
-    make install CONFIG_PREFIX="${BUILD_DIR}" ARCH=arm64 CROSS_COMPILE="${CROSS_COMPILE}"
+    # Install the binaries to the temporary build directory
+    make install CONFIG_PREFIX="${BUILD_DIR}" ARCH=arm64 
 }
 
 create_initramfs() {
@@ -58,23 +57,26 @@ create_initramfs() {
     rm -rf "${INITRAMFS_DIR}" "${OUTPUT_FILE}"
     mkdir -p "${INITRAMFS_DIR}"
     
-    # Copy the installed BusyBox files
+    # Copy the installed BusyBox files to the initramfs directory
     cp -a "${BUILD_DIR}/"* "${INITRAMFS_DIR}/"
 
-    # Create essential directories
+    # Create essential directories for a minimal Linux system
     cd "${INITRAMFS_DIR}"
     mkdir -p {dev,proc,sys,etc}
 
-    # Create a basic 'init' script
+    # Create a basic 'init' script for the kernel to run
     cat > init << EOF
 #!/bin/sh
 mount -t proc none /proc
 mount -t sysfs none /sys
 exec /bin/sh
 EOF
+
+    # Make the init script executable
     chmod +x init
 
     echo "Building compressed cpio archive..."
+    # Create the cpio archive from the initramfs directory
     find . -print0 | cpio --null -ov --format=newc | gzip -9 > "../../${OUTPUT_FILE}"
     echo "Successfully created ${OUTPUT_FILE}"
 }
@@ -86,11 +88,23 @@ echo "Starting BusyBox build for AArch64..."
 mkdir -p build
 
 # Run the functions in order
-check_cross_compiler
 download_busybox
 configure_busybox
 build_and_install_busybox
 create_initramfs
 
 echo "Done. The initramfs is available as ${OUTPUT_FILE}."
+
+# --- Example of how to run with QEMU ---
+# This command is for reference. Run it from your project root.
+# qemu-system-aarch64 \
+#     -M virt \
+#     -cpu cortex-a57 \
+#     -m 512M \
+#     -kernel linux-v6.12/arch/arm64/boot/Image \
+#     -initrd initramfs.cpio.gz \
+#     -append "console=ttyAMA0 mem=512M rdinit=/init" \
+#     -nographic
+
+
 

@@ -6,7 +6,7 @@ export ARCH=arm64
 export CROSS_COMPILE=aarch64-linux-gnu-
 
 # Base config
-make defconfig
+make defconfig ARCH=arm64
 
 # Merge our fragment (ships with the kernel)
 	./scripts/kconfig/merge_config.sh -m .config ../config/fuzzingKernelConfig.fragment
